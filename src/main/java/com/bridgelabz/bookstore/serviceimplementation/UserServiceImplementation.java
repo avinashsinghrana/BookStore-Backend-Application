@@ -29,6 +29,9 @@ import com.bridgelabz.bookstore.utility.RabbitMQSender;
 import com.bridgelabz.bookstore.utility.RedisTempl;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.annotation.PostConstruct;
+import javax.transaction.Transactional;
+
 import static java.util.stream.Collectors.toList;
 
 import java.sql.Timestamp;
@@ -57,7 +60,7 @@ public class UserServiceImplementation implements UserService {
 
     @Autowired
     private OrderRepository orderRepository;
-    
+
     @Autowired
     private Environment environment;
 
@@ -75,16 +78,24 @@ public class UserServiceImplementation implements UserService {
 
     @Autowired
     private RedisTempl<Object> redis;
+
     @Autowired
     JwtGenerator jwtop;
 
     private String redisKey = "Key";
 
     private static final long REGISTRATION_EXP = (long) 10800000;
-    private static final String VERIFICATION_URL = "http://localhost:4200/verification/";
-    private static final String RESETPASSWORD_URL = "http://localhost:4200/resetpassword?token=";
+    private static String VERIFICATION_URL;
+    private static String RESETPASSWORD_URL;
+
+    @PostConstruct
+    public void setup() {
+        VERIFICATION_URL = environment.getProperty("user.base.url") + "/verification/";
+        RESETPASSWORD_URL = environment.getProperty("user.base.url") + "/resetpassword?token=";
+    }
 
     @Override
+    @Transactional
     public boolean register(RegistrationDto registrationDto) throws UserException {
         UserModel emailavailable = userRepository.findByEmailId(registrationDto.getEmailId());
         if (emailavailable != null) {
@@ -143,7 +154,7 @@ public class UserServiceImplementation implements UserService {
         if (isIdAvailable != null && isIdAvailable.isVerified()) {
             String token = JwtGenerator.createJWT(isIdAvailable.getUserId(), REGISTRATION_EXP);
             String response = RESETPASSWORD_URL + token;
-            if (rabbitMQSender.send(new EmailObject(isIdAvailable.getEmailId(), "ResetPassword Link...", response , "Reset Password Link")))
+            if (rabbitMQSender.send(new EmailObject(isIdAvailable.getEmailId(), "ResetPassword Link...", response, "Reset Password Link")))
                 return new UserDetailsResponse(HttpStatus.OK.value(), "ResetPassword link Successfully", token);
         }
         return new UserDetailsResponse(HttpStatus.OK.value(), "Eamil ending failed");
@@ -170,10 +181,10 @@ public class UserServiceImplementation implements UserService {
         UserModel userCheck = userRepository.findByEmailId(loginDTO.getEmailId());
 
         if (userCheck == null) {
-            throw new UserException(environment.getProperty("user.not.found"),HttpStatus.NOT_FOUND.value());
+            throw new UserException(environment.getProperty("user.not.found"), HttpStatus.NOT_FOUND.value());
         }
-        if(!userCheck.isVerified()){
-            throw new UserException(environment.getProperty("unverified.user"),HttpStatus.BAD_REQUEST.value());
+        if (!userCheck.isVerified()) {
+            throw new UserException(environment.getProperty("unverified.user"), HttpStatus.BAD_REQUEST.value());
         }
       /*  if(!loginDTO.getRoleType().equals(userCheck.getRoleType())){
             System.out.println(loginDTO.getRoleType()+" "+userCheck.getRoleType());
@@ -184,52 +195,53 @@ public class UserServiceImplementation implements UserService {
             redis.putMap(redisKey, userCheck.getEmailId(), userCheck.getPassword());
             userCheck.setUserStatus(true);
             userRepository.save(userCheck);
-           // LoginResponse loginResponse = new LoginResponse(token,userCheck.getFullName(),userCheck.getRoleType());
-            return new Response(userCheck.getFullName(),HttpStatus.OK.value(),userCheck.getRoleType(),token);
+            // LoginResponse loginResponse = new LoginResponse(token,userCheck.getFullName(),userCheck.getRoleType());
+            return new Response(userCheck.getFullName(), HttpStatus.OK.value(), userCheck.getRoleType(), token);
         }
 
-        throw new UserException(environment.getProperty("user.invalid.credential"),HttpStatus.FORBIDDEN.value());
+        throw new UserException(environment.getProperty("user.invalid.credential"), HttpStatus.FORBIDDEN.value());
     }
 
-  /*  @Override
-    public Response addToCart(Long bookId) throws BookException {
-        BookModel bookModel = bookRepository.findById(bookId)
-                .orElseThrow(() -> new BookException(environment.getProperty("book.not.exist"),HttpStatus.NOT_FOUND));
+    /*  @Override
+      public Response addToCart(Long bookId) throws BookException {
+          BookModel bookModel = bookRepository.findById(bookId)
+                  .orElseThrow(() -> new BookException(environment.getProperty("book.not.exist"),HttpStatus.NOT_FOUND));
 
-        if (bookModel.isVerfied()) {
-        	CartModel cartModel = new CartModel();
-            cartModel.setBook_id(bookId);
-            cartModel.setName(bookModel.getBookName());
-            cartModel.setAuthor(bookModel.getAuthorName());
-            cartModel.setTotalPrice(bookModel.getPrice());
-            cartModel.setImgUrl(bookModel.getBookImgUrl());
-            cartModel.setQuantity(1);
-            cartModel.setMaxQuantity(bookModel.getQuantity());
-            cartRepository.save(cartModel);
-            int size = cartRepository.findAll().size();
-            return new Response(size, environment.getProperty("book.added.to.cart.successfully"), HttpStatus.OK.value(), cartModel);
-        }
-        throw new BookException(environment.getProperty("book.unverified"), HttpStatus.OK);
+          if (bookModel.isVerfied()) {
+              CartModel cartModel = new CartModel();
+              cartModel.setBook_id(bookId);
+              cartModel.setName(bookModel.getBookName());
+              cartModel.setAuthor(bookModel.getAuthorName());
+              cartModel.setTotalPrice(bookModel.getPrice());
+              cartModel.setImgUrl(bookModel.getBookImgUrl());
+              cartModel.setQuantity(1);
+              cartModel.setMaxQuantity(bookModel.getQuantity());
+              cartRepository.save(cartModel);
+              int size = cartRepository.findAll().size();
+              return new Response(size, environment.getProperty("book.added.to.cart.successfully"), HttpStatus.OK.value(), cartModel);
+          }
+          throw new BookException(environment.getProperty("book.unverified"), HttpStatus.OK);
 
-    }*/
+      }*/
     @Override
     public Response addToCart(CartDto cartDto, Long bookId, String token) {
-           long id = JwtGenerator.decodeJWT(token);
-           Optional<CartModel> book = cartRepository.findByBookIdAndUserId(bookId,id);
-           if(book.isPresent()){
-               if(cartDto==null){
-                   cartRepository.delete(book.get());
-               }
-               BeanUtils.copyProperties(cartDto,book.get());
-           }else {
-               CartModel cartModel = new CartModel();
-               BeanUtils.copyProperties(cartDto, cartModel);
-               cartModel.setUserId(id);
-               cartRepository.save(cartModel);
-           }
-            return new Response(environment.getProperty("book.added.to.cart.successfully"), HttpStatus.OK.value(), id);
+        long id = JwtGenerator.decodeJWT(token);
+        Optional<CartModel> book = cartRepository.findByBookIdAndUserId(bookId, id);
+        if (book.isPresent()) {
+            if (cartDto == null) {
+                cartRepository.delete(book.get());
+            }
+            BeanUtils.copyProperties(cartDto, book.get());
+        } else {
+            CartModel cartModel = new CartModel();
+            BeanUtils.copyProperties(cartDto, cartModel);
+            cartModel.setUserId(id);
+            cartRepository.save(cartModel);
+        }
+        return new Response(environment.getProperty("book.added.to.cart.successfully"), HttpStatus.OK.value(), id);
 
     }
+
     @Override
     public Response addMoreItems(Long bookId) throws BookException {
 
@@ -245,17 +257,17 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
-	public Response addItems(Long bookId, int quantity) throws BookException {
-    	CartModel cartModel = cartRepository.findByBookId(bookId)
+    public Response addItems(Long bookId, int quantity) throws BookException {
+        CartModel cartModel = cartRepository.findByBookId(bookId)
                 .orElseThrow(() -> new BookException(environment.getProperty("book.not.added"), HttpStatus.NOT_FOUND.value()));
-    	double price = cartModel.getTotalPrice() / cartModel.getQuantity();
-    	cartModel.setTotalPrice(price * quantity);
-    	cartModel.setQuantity(quantity);
+        double price = cartModel.getTotalPrice() / cartModel.getQuantity();
+        cartModel.setTotalPrice(price * quantity);
+        cartModel.setQuantity(quantity);
         cartRepository.save(cartModel);
         return new Response(environment.getProperty("book.added.to.cart.successfully"), HttpStatus.OK.value(), cartModel);
-	}
-    
-    
+    }
+
+
     @Override
     public Response removeItem(Long bookId) throws BookException {
 
@@ -274,40 +286,41 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
-    public Response removeByBookId(Long bookId,String token) throws BookException {
+    public Response removeByBookId(Long bookId, String token) throws BookException {
         long id = JwtGenerator.decodeJWT(token);
-    	CartModel cartModel = cartRepository.findByBookIdAndUserId(bookId,id)
-    			 .orElseThrow(() -> new BookException(environment.getProperty("book.not.added"), HttpStatus.NOT_FOUND.value()));
-    	cartRepository.deleteById(cartModel.getId());
-        return new Response(HttpStatus.OK.value(), environment.getProperty("quantity.removed.success"));
-    }
-    @Override
-    public Response removeAll(String token) {
-        long id = JwtGenerator.decodeJWT(token);
-    	List<CartModel> cartList = cartRepository.findByUserId(id);
-    	for(CartModel book : cartList) {
-    		BookModel bookModel = bookRepository.findByBookId(book.getBookId());
-    		int netQuantity = bookModel.getQuantity() - book.getQuantity();
-    		bookModel.setQuantity(netQuantity);
-    		bookRepository.save(bookModel);
-    		cartRepository.deleteById(book.getId());
-    	}
+        CartModel cartModel = cartRepository.findByBookIdAndUserId(bookId, id)
+                .orElseThrow(() -> new BookException(environment.getProperty("book.not.added"), HttpStatus.NOT_FOUND.value()));
+        cartRepository.deleteById(cartModel.getId());
         return new Response(HttpStatus.OK.value(), environment.getProperty("quantity.removed.success"));
     }
 
-  /*  @Override
-    public List<CartModel> getAllItemFromCart() throws BookException {
-        List<CartModel> items = cartRepository.findAll();
-        if (items.isEmpty())
-            throw new BookException(environment.getProperty("cart.empty"), HttpStatus.NOT_FOUND);
-        return items;
-    }*/
+    @Override
+    public Response removeAll(String token) {
+        long id = JwtGenerator.decodeJWT(token);
+        List<CartModel> cartList = cartRepository.findByUserId(id);
+        for (CartModel book : cartList) {
+            BookModel bookModel = bookRepository.findByBookId(book.getBookId());
+            int netQuantity = bookModel.getQuantity() - book.getQuantity();
+            bookModel.setQuantity(netQuantity);
+            bookRepository.save(bookModel);
+            cartRepository.deleteById(book.getId());
+        }
+        return new Response(HttpStatus.OK.value(), environment.getProperty("quantity.removed.success"));
+    }
+
+    /*  @Override
+      public List<CartModel> getAllItemFromCart() throws BookException {
+          List<CartModel> items = cartRepository.findAll();
+          if (items.isEmpty())
+              throw new BookException(environment.getProperty("cart.empty"), HttpStatus.NOT_FOUND);
+          return items;
+      }*/
     @Override
     public List<CartModel> getAllItemFromCart(String token) throws BookException {
         long id = JwtGenerator.decodeJWT(token);
-        System.out.println("id"+id);
+        System.out.println("id" + id);
         List<CartModel> items = cartRepository.findByUserId(id);
-        System.out.println("items"+items);
+        System.out.println("items" + items);
        /* if (items.isEmpty())
             throw new BookException(environment.getProperty("cart.empty"), HttpStatus.NOT_FOUND);*/
         return items;
@@ -326,17 +339,18 @@ public class UserServiceImplementation implements UserService {
 
     @Override
     public List<BookModel> getAllBooks() throws UserException {
-        List<BookModel> book=bookRepository.getAllBooks();
+        List<BookModel> book = bookRepository.getAllBooks();
         return book;
     }
+
     @Override
-    public String uploadFile(MultipartFile file, String token){
+    public String uploadFile(MultipartFile file, String token) {
         String url = amazonS3ClientService.uploadFile(file);
         long id = JwtGenerator.decodeJWT(token);
         UserModel user = userRepository.findById(id).get();
         user.setProfileUrl(url);
         userRepository.save(user);
-        if(RoleType.SELLER==user.getRoleType()) {
+        if (RoleType.SELLER == user.getRoleType()) {
             SellerModel seller = sellerRepository.getSeller(id).get();
             seller.setImgUrl(url);
             sellerRepository.save(seller);
@@ -352,16 +366,14 @@ public class UserServiceImplementation implements UserService {
           return booklist;
       }*/
     @Override
-    public List<BookModel> getAllVerifiedBooks() throws UserException
-    {
-        List<BookModel> booklist=bookRepository.getAllVerifiedBooks();
+    public List<BookModel> getAllVerifiedBooks() throws UserException {
+        List<BookModel> booklist = bookRepository.getAllVerifiedBooks();
         return booklist;
     }
 
     @Override
-    public BookModel getBookDetails(Long bookid) throws UserException
-    {
-        BookModel bookdetail=bookRepository.getBookDetail(bookid);
+    public BookModel getBookDetails(Long bookid) throws UserException {
+        BookModel bookdetail = bookRepository.getBookDetail(bookid);
         return bookdetail;
     }
 
@@ -397,7 +409,7 @@ public class UserServiceImplementation implements UserService {
     /************************ user details ****************************/
     @Override
     public UserAddressDetailsResponse getUserDetails(String token) {
-    	long userId = JwtGenerator.decodeJWT(token);
+        long userId = JwtGenerator.decodeJWT(token);
         UserModel user = userRepository.findByUserId(userId);
         List<UserDetailsDTO> allDetailsByUser = user.getListOfUserDetails().stream().map(this::mapData).collect(toList());
         if (allDetailsByUser.isEmpty())
@@ -412,7 +424,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
-    public Response addUserDetails(UserDetailsDTO userDetail,String locationType, long userId) {
+    public Response addUserDetails(UserDetailsDTO userDetail, String locationType, long userId) {
         UserDetailsDAO userDetailsDAO = new UserDetailsDAO();
         BeanUtils.copyProperties(userDetail, userDetailsDAO);
         UserModel user = userRepository.findByUserId(userId);
@@ -434,39 +446,38 @@ public class UserServiceImplementation implements UserService {
         userRepository.save(userModel);
         return new Response(HttpStatus.OK.value(), environment.getProperty("user.details.deleted"));
     }
-	@Override
-	public Long getIdFromToken(String token) 
-	{
-		Long id=jwtop.decodeJWT(token);
-		return id;
-	}
 
-	@Override
-	public Optional<BookModel> searchBookByName(String bookName)
-	{
-	    Optional<BookModel> book=bookRepository.searchBookByName(bookName);
-		return book;
-	}
+    @Override
+    public Long getIdFromToken(String token) {
+        Long id = jwtop.decodeJWT(token);
+        return id;
+    }
 
-	@Override
-	public Optional<BookModel> searchBookByAuthor(String authorName) {
-		Optional<BookModel> book=bookRepository.searchBookByAuthor(authorName);
-		return book;
-	}
+    @Override
+    public Optional<BookModel> searchBookByName(String bookName) {
+        Optional<BookModel> book = bookRepository.searchBookByName(bookName);
+        return book;
+    }
+
+    @Override
+    public Optional<BookModel> searchBookByAuthor(String authorName) {
+        Optional<BookModel> book = bookRepository.searchBookByAuthor(authorName);
+        return book;
+    }
 
     @Override
     public long getOrderId() {
-    	Date date= new Date();
+        Date date = new Date();
         //getTime() returns current time in milliseconds
-	 long time = date.getTime();
+        long time = date.getTime();
         //Passed the milliseconds to constructor of Timestamp class 
-	 Timestamp ts = new Timestamp(time);
-	return time;
+        Timestamp ts = new Timestamp(time);
+        return time;
     }
-    
+
     @Override
-	public Response orderPlaced(String token) throws BookException {
-		long id = JwtGenerator.decodeJWT(token);
+    public Response orderPlaced(String token) throws BookException {
+        long id = JwtGenerator.decodeJWT(token);
         UserModel userInfo = userRepository.findByUserId(id);
         List<CartModel> allItemFromCart = getAllItemFromCart(token);
         long orderId = getOrderId();
@@ -476,7 +487,7 @@ public class UserServiceImplementation implements UserService {
         String quantity;
         for (CartModel cartModel : allItemFromCart) {
             BookModel bookModel = bookRepository.findByBookId(cartModel.getBookId());
-            bookName = bookName + bookModel.getBookName() +" (Rs."+price+ bookModel.getPrice()+")\n";
+            bookName = bookName + bookModel.getBookName() + " (Rs." + price + bookModel.getPrice() + ")\n";
             totalPrice = totalPrice + cartModel.getTotalPrice();
             bookModel.setQuantity(bookModel.getQuantity() - cartModel.getQuantity());
             bookRepository.save(bookModel);
@@ -487,38 +498,39 @@ public class UserServiceImplementation implements UserService {
             order.setQuantity(cartModel.getQuantity());
             orderRepository.save(order);
         }
-        if( userInfo != null) {
-        String response =
-                "==================\n" +
-        		"ONLINE BOOK STORE \n" +
-                "==================\n\n" +
-                "Hello " + userInfo.getFullName() + ",\n\n" +
-                "Your order has been placed successfully.\n" +
-                "----------------------------------------------------------------\n" +
-                "Your OrderId is "+orderId+"\n"+
-                "*Book* Name : " + bookName+"\n" +
-                "Total Items : " + allItemFromCart.size() +"\n" +
-                "----------------------------------------------------------------\n" +
-                "Total Price : Rs." + totalPrice+"\n"+
-                "\n\n" +
-                "Thank you for Shopping with us.\n" +
-                "Have a great Experience with us !!" +
-                 "\n\n" +
-                 "Thank you,\n" +
-                 "Online Book Store Team, Bangalore\n" +
-                 "Contact us\n" +
-                 "mob. : +91-9771971429\n" +
-                 "email : admin@onlinebookstore.com\n";
-        if (rabbitMQSender.send(new EmailObject(userInfo.getEmailId(), "Order Placed Successfully..", response, "Order Placed"))) {
-            return new Response("Order Successfull",HttpStatus.OK.value(), orderId);
-        }}
+        if (userInfo != null) {
+            String response =
+                    "==================\n" +
+                            "ONLINE BOOK STORE \n" +
+                            "==================\n\n" +
+                            "Hello " + userInfo.getFullName() + ",\n\n" +
+                            "Your order has been placed successfully.\n" +
+                            "----------------------------------------------------------------\n" +
+                            "Your OrderId is " + orderId + "\n" +
+                            "*Book* Name : " + bookName + "\n" +
+                            "Total Items : " + allItemFromCart.size() + "\n" +
+                            "----------------------------------------------------------------\n" +
+                            "Total Price : Rs." + totalPrice + "\n" +
+                            "\n\n" +
+                            "Thank you for Shopping with us.\n" +
+                            "Have a great Experience with us !!" +
+                            "\n\n" +
+                            "Thank you,\n" +
+                            "Online Book Store Team, Bangalore\n" +
+                            "Contact us\n" +
+                            "mob. : +91-9771971429\n" +
+                            "email : admin@onlinebookstore.com\n";
+            if (rabbitMQSender.send(new EmailObject(userInfo.getEmailId(), "Order Placed Successfully..", response, "Order Placed"))) {
+                return new Response("Order Successfull", HttpStatus.OK.value(), orderId);
+            }
+        }
         throw new BookException(environment.getProperty("book.unverified"), HttpStatus.OK.value());
-	}
+    }
 
     @Override
     public Response addToWishList(Long bookId, String token) {
         long id = JwtGenerator.decodeJWT(token);
-        if(!wish.existsByBookIdAndUserId(bookId, id)) {
+        if (!wish.existsByBookIdAndUserId(bookId, id)) {
             WishListModel wishListModel = new WishListModel();
             BookModel bookModel = bookRepository.findByBookId(bookId);
             BeanUtils.copyProperties(bookModel, wishListModel);
@@ -527,7 +539,7 @@ public class UserServiceImplementation implements UserService {
             List<WishListModel> cart = wish.findAllByUserId(id);
             return new Response("Book added to WishList", HttpStatus.OK.value(), cart);
         }
-        return new Response(  HttpStatus.OK.value(), "Book already in WishList");
+        return new Response(HttpStatus.OK.value(), "Book already in WishList");
     }
 
     @Override
@@ -536,13 +548,13 @@ public class UserServiceImplementation implements UserService {
         WishListModel byBookIdAndUserId = wish.findByBookIdAndUserId(bookId, id);
         wish.delete(byBookIdAndUserId);
         List<WishListModel> cart = wish.findAllByUserId(id);
-        return new Response("Book deleted from WishList", HttpStatus.OK.value(),cart);
+        return new Response("Book deleted from WishList", HttpStatus.OK.value(), cart);
     }
 
     @Override
     public Response addFromWishlistToCart(Long bookId, String token) {
         long id = JwtGenerator.decodeJWT(token);
-        if(!cartRepository.existsByBookIdAndUserId(bookId, id)) {
+        if (!cartRepository.existsByBookIdAndUserId(bookId, id)) {
             CartModel cartModel = new CartModel();
             BookModel bookModel = bookRepository.findByBookId(bookId);
             BeanUtils.copyProperties(bookModel, cartModel);
@@ -565,6 +577,6 @@ public class UserServiceImplementation implements UserService {
     public Response getAllItemFromWishList(String token) {
         long id = JwtGenerator.decodeJWT(token);
         List<WishListModel> wishListModels = wish.findAllByUserId(id);
-        return new Response("Book added to WishList",HttpStatus.OK.value(), wishListModels);
+        return new Response("Book added to WishList", HttpStatus.OK.value(), wishListModels);
     }
 }

@@ -14,36 +14,48 @@ import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.JdkSerializationRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+import java.util.Objects;
+
 @Configuration
 @EnableCaching
 public class RedisConfig extends CachingConfigurerSupport {
 
-	@Value("${spring.redis.host}")
-	private String redisHostName;
+    @Value("${spring.redis.host}")
+    private String redisHostName;
 
-	@Value("${spring.redis.port}")
-	private int redisPort;
+    @Value("${spring.redis.port}")
+    private int redisPort;
 
-	@Bean
-	protected JedisConnectionFactory jedisConnectionFactory() {
-		RedisStandaloneConfiguration configuration = new RedisStandaloneConfiguration(redisHostName, redisPort);
-		configuration.setPassword(RedisPassword.of("password"));
-		JedisClientConfiguration jedisClientConfiguration = JedisClientConfiguration.builder().usePooling().build();
-		JedisConnectionFactory factory = new JedisConnectionFactory(configuration, jedisClientConfiguration);
-		factory.getPoolConfig().setMaxIdle(30);
-		factory.getPoolConfig().setMinIdle(10);
-		factory.afterPropertiesSet();
-		return factory;
-	}
+    //	@Bean
+    protected JedisConnectionFactory jedisConnectionFactory() {
+        RedisStandaloneConfiguration configuration = new RedisStandaloneConfiguration(redisHostName, redisPort);
+        configuration.setPassword(RedisPassword.of("password"));
+        JedisClientConfiguration jedisClientConfiguration = JedisClientConfiguration.builder().usePooling().build();
+        JedisConnectionFactory factory = new JedisConnectionFactory(configuration, jedisClientConfiguration);
+        Objects.requireNonNull(factory.getPoolConfig()).setMaxIdle(30);
+        factory.getPoolConfig().setMinIdle(10);
+        factory.afterPropertiesSet();
+        return factory;
+    }
 
-	@Bean
-	public RedisTemplate<String, Object> redisTemplate() {
-		final RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
-		redisTemplate.setKeySerializer(new StringRedisSerializer());
-		redisTemplate.setHashKeySerializer(new GenericToStringSerializer<Object>(Object.class));
-		redisTemplate.setHashValueSerializer(new JdkSerializationRedisSerializer());
-		redisTemplate.setValueSerializer(new JdkSerializationRedisSerializer());
-		redisTemplate.setConnectionFactory(jedisConnectionFactory());
-		return redisTemplate;
-	}
+//	@Bean
+//	JedisConnectionFactory jedisConnectionFactory() {
+//		JedisConnectionFactory factory = new JedisConnectionFactory();
+//		factory.setHostName(redisHostName);
+//		factory.setPort(redisPort);
+//		factory.setUsePool(true);
+//		return factory;
+//	}
+
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate() {
+        final RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
+        redisTemplate.setKeySerializer(new StringRedisSerializer());
+        redisTemplate.setHashKeySerializer(new GenericToStringSerializer<Object>(Object.class));
+        redisTemplate.setHashValueSerializer(new JdkSerializationRedisSerializer());
+        redisTemplate.setValueSerializer(new JdkSerializationRedisSerializer());
+        redisTemplate.setConnectionFactory(jedisConnectionFactory());
+        redisTemplate.setEnableTransactionSupport(true);
+        return redisTemplate;
+    }
 }
