@@ -1,0 +1,5 @@
+amazonProperties:
+    endpointUrl: https://s3.ap-south-1.amazonaws.com
+    accessKey: AKIAU3R7CX3QZHAIR4OK
+    secretKey: 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
+    bucketName: online-book

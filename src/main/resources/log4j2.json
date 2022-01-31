@@ -1,0 +1,119 @@
+{
+  "configuration": {
+    "name": "LMS-backend-configuration",
+    "packages": "com.bridgelabz",
+    "ThresholdFilter": {
+      "level": "info"
+    },
+    "appenders": {
+      "Console": {
+        "name": "Console",
+        "target": "SYSTEM_OUT",
+        "PatternLayout": {
+          "pattern": "%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n"
+        },
+        "ThresholdFilter": {
+          "level": "info"
+        }
+      },
+      "RollingFile": [
+        {
+          "name": "File",
+          "fileName": "logs/lms-web.log",
+          "filePattern": "logs/lms-web-%d{yyyy-MM-dd-HH-mm}-%i.log.gz",
+          "PatternLayout": {
+            "pattern": "%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %msg%n"
+          },
+          "append": "true",
+          "immediateFlush": "true",
+          "Policies": {
+            "CronTriggeringPolicy": {
+              "schedule": "0 0 0/12 * * ?"
+            }
+          },
+          "DefaultRolloverStrategy": {
+            "max": "30"
+          },
+          "ThresholdFilter": {
+            "level": "info"
+          }
+        },
+        {
+          "name": "SchedulerFileAppender",
+          "fileName": "logs/schedulers.log",
+          "filePattern": "logs/schedulers-%d{yyyy-MM-dd-HH-mm}-%i.log.gz",
+          "PatternLayout": {
+            "pattern": "%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %msg%n"
+          },
+          "append": "true",
+          "immediateFlush": "true",
+          "Policies": {
+            "CronTriggeringPolicy": {
+              "schedule": "0 0 0/12 * * ?"
+            }
+          },
+          "DefaultRolloverStrategy": {
+            "max": "30"
+          },
+          "ThresholdFilter": {
+            "level": "info"
+          }
+        }
+      ]
+    },
+    "loggers": {
+      "logger": [
+        {
+          "name": "com.credable",
+          "level": "info",
+          "additivity": "false",
+          "appender-ref": [
+            {
+              "ref": "File"
+            },
+            {
+              "ref": "Console"
+            }
+          ]
+        },
+        {
+          "name": "org.springframework",
+          "level": "info",
+          "additivity": "false",
+          "appender-ref": [
+            {
+              "ref": "File"
+            },
+            {
+              "ref": "Console"
+            }
+          ]
+        },
+        {
+          "name": "org.hibernate",
+          "level": "error",
+          "additivity": "false",
+          "appender-ref": [
+            {
+              "ref": "File"
+            },
+            {
+              "ref": "Console"
+            }
+          ]
+        }
+      ],
+      "root": {
+        "level": "info",
+        "appender-ref": [
+          {
+            "ref": "File"
+          },
+          {
+            "ref": "Console"
+          }
+        ]
+      }
+    }
+  }
+}

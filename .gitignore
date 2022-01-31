@@ -1,0 +1,44 @@
+gitHELP.md
+target/
+.idea/**
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**
+!**/src/test/**
+*.class
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+#*.apk
+#*.ap_
+#*.dex
+#*.class
+#**/bin/
+#**/gen/
+#.gradle/
+#build/
+#local.properties
+#**/proguard/
+#*.log
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+
+### VS Code ###
+.vscode/
