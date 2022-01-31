@@ -1,17 +1,23 @@
 package com.bridgelabz.bookstore.serviceimplementation;
 
-import java.time.LocalDateTime;
-import java.util.Date;
-import java.util.List;
-import java.util.Optional;
-import java.util.Random;
-
+import com.bridgelabz.bookstore.cache.EmailProperties;
+import com.bridgelabz.bookstore.cache.EmailTemplateCache;
 import com.bridgelabz.bookstore.dto.*;
 import com.bridgelabz.bookstore.enums.RoleType;
 import com.bridgelabz.bookstore.exception.BookException;
+import com.bridgelabz.bookstore.exception.UserException;
+import com.bridgelabz.bookstore.exception.UserNotFoundException;
+import com.bridgelabz.bookstore.exception.UserVerificationException;
 import com.bridgelabz.bookstore.model.*;
 import com.bridgelabz.bookstore.repository.*;
-import com.bridgelabz.bookstore.response.*;
+import com.bridgelabz.bookstore.response.Response;
+import com.bridgelabz.bookstore.response.UserAddressDetailsResponse;
+import com.bridgelabz.bookstore.response.UserDetailsResponse;
+import com.bridgelabz.bookstore.service.UserService;
+import com.bridgelabz.bookstore.utility.AsyncTask;
+import com.bridgelabz.bookstore.utility.JwtGenerator;
+import com.bridgelabz.bookstore.utility.RedisTempl;
+import com.bridgelabz.bookstore.utility.Utils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.PropertySource;
@@ -19,23 +25,15 @@ import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
-
-import com.bridgelabz.bookstore.exception.UserException;
-import com.bridgelabz.bookstore.exception.UserNotFoundException;
-import com.bridgelabz.bookstore.exception.UserVerificationException;
-import com.bridgelabz.bookstore.service.UserService;
-import com.bridgelabz.bookstore.utility.JwtGenerator;
-import com.bridgelabz.bookstore.utility.RabbitMQSender;
-import com.bridgelabz.bookstore.utility.RedisTempl;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.PostConstruct;
 import javax.transaction.Transactional;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.*;
 
 import static java.util.stream.Collectors.toList;
-
-import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
 
 @Service
 @PropertySource(name = "user", value = {"classpath:response.properties"})
@@ -45,6 +43,9 @@ public class UserServiceImplementation implements UserService {
 
     @Autowired
     private AdminRepository adminRepository;
+
+    @Autowired
+    private EmailTemplateCache emailTemplateCache;
 
     @Autowired
     private BCryptPasswordEncoder bCryptPasswordEncoder;
@@ -74,10 +75,10 @@ public class UserServiceImplementation implements UserService {
     private AmazonS3ClientServiceImpl amazonS3ClientService;
 
     @Autowired
-    private RabbitMQSender rabbitMQSender;
+    private RedisTempl<Object> redis;
 
     @Autowired
-    private RedisTempl<Object> redis;
+    private AsyncTask asyncTask;
 
     @Autowired
     JwtGenerator jwtop;
@@ -124,14 +125,25 @@ public class UserServiceImplementation implements UserService {
                     adminRepository.save(adminDetails);
                     break;
             }
-            if (rabbitMQSender.send(new EmailObject(sendMail.getEmailId(), "Registration Link...", response, "link for Verification")))
-                return true;
-
+            Optional<EmailTemplate> template = emailTemplateCache.getEmailTemplate(EmailProperties.REGISTRATION_MAIL);
+            if (template.isPresent()) {
+                EmailTemplate emailTemplate = template.get();
+                Map<String, String> params = new HashMap<>();
+                params.put("linkurl", response);
+                params.put("email", sendMail.getEmailId());
+                params.put("url", environment.getProperty("user.base.url"));
+                String emailBody = Utils.replaceParams(params, emailTemplate.getTemplate());
+                asyncTask.sendEmail(sendMail.getEmailId(), emailTemplate.getSubject(), emailBody);
+            } else
+                System.out.println("EmailTemplate not found");
+//            if (rabbitMQSender.send(new EmailObject(sendMail.getEmailId(), "Registration Link...", response, "link for Verification")))
+//                return true;
         }
         throw new UserException(environment.getProperty("user.invalidcredentials"), HttpStatus.FORBIDDEN.value());
     }
 
     @Override
+    @Transactional
     public boolean verify(String token) {
         long id = JwtGenerator.decodeJWT(token);
         UserModel userInfo = userRepository.findByUserId(id);
@@ -149,18 +161,20 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public UserDetailsResponse forgetPassword(ForgotPasswordDto userMail) {
         UserModel isIdAvailable = userRepository.findByEmailId(userMail.getEmailId());
         if (isIdAvailable != null && isIdAvailable.isVerified()) {
             String token = JwtGenerator.createJWT(isIdAvailable.getUserId(), REGISTRATION_EXP);
             String response = RESETPASSWORD_URL + token;
-            if (rabbitMQSender.send(new EmailObject(isIdAvailable.getEmailId(), "ResetPassword Link...", response, "Reset Password Link")))
-                return new UserDetailsResponse(HttpStatus.OK.value(), "ResetPassword link Successfully", token);
+            asyncTask.sendEmail(isIdAvailable.getEmailId(), "ResetPassword Link...", "Reset Password Link  \n" + response);
+            return new UserDetailsResponse(HttpStatus.OK.value(), "ResetPassword link Successfully", token);
         }
         return new UserDetailsResponse(HttpStatus.OK.value(), "Eamil ending failed");
     }
 
     @Override
+    @Transactional
     public boolean resetPassword(ResetPasswordDto resetPassword, String token) throws UserNotFoundException {
         if (resetPassword.getNewPassword().equals(resetPassword.getConfirmPassword())) {
             long id = JwtGenerator.decodeJWT(token);
@@ -177,6 +191,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response login(LoginDto loginDTO) throws UserException {
         UserModel userCheck = userRepository.findByEmailId(loginDTO.getEmailId());
 
@@ -202,7 +217,8 @@ public class UserServiceImplementation implements UserService {
         throw new UserException(environment.getProperty("user.invalid.credential"), HttpStatus.FORBIDDEN.value());
     }
 
-    /*  @Override
+    /*   @Override
+    @Transactional
       public Response addToCart(Long bookId) throws BookException {
           BookModel bookModel = bookRepository.findById(bookId)
                   .orElseThrow(() -> new BookException(environment.getProperty("book.not.exist"),HttpStatus.NOT_FOUND));
@@ -224,6 +240,7 @@ public class UserServiceImplementation implements UserService {
 
       }*/
     @Override
+    @Transactional
     public Response addToCart(CartDto cartDto, Long bookId, String token) {
         long id = JwtGenerator.decodeJWT(token);
         Optional<CartModel> book = cartRepository.findByBookIdAndUserId(bookId, id);
@@ -243,6 +260,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response addMoreItems(Long bookId) throws BookException {
 
         CartModel cartModel = cartRepository.findByBookId(bookId)
@@ -257,6 +275,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response addItems(Long bookId, int quantity) throws BookException {
         CartModel cartModel = cartRepository.findByBookId(bookId)
                 .orElseThrow(() -> new BookException(environment.getProperty("book.not.added"), HttpStatus.NOT_FOUND.value()));
@@ -269,6 +288,7 @@ public class UserServiceImplementation implements UserService {
 
 
     @Override
+    @Transactional
     public Response removeItem(Long bookId) throws BookException {
 
         CartModel cartModel = cartRepository.findByBookId(bookId)
@@ -286,6 +306,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response removeByBookId(Long bookId, String token) throws BookException {
         long id = JwtGenerator.decodeJWT(token);
         CartModel cartModel = cartRepository.findByBookIdAndUserId(bookId, id)
@@ -295,6 +316,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response removeAll(String token) {
         long id = JwtGenerator.decodeJWT(token);
         List<CartModel> cartList = cartRepository.findByUserId(id);
@@ -308,7 +330,8 @@ public class UserServiceImplementation implements UserService {
         return new Response(HttpStatus.OK.value(), environment.getProperty("quantity.removed.success"));
     }
 
-    /*  @Override
+    /*   @Override
+    @Transactional
       public List<CartModel> getAllItemFromCart() throws BookException {
           List<CartModel> items = cartRepository.findAll();
           if (items.isEmpty())
@@ -316,6 +339,7 @@ public class UserServiceImplementation implements UserService {
           return items;
       }*/
     @Override
+    @Transactional
     public List<CartModel> getAllItemFromCart(String token) throws BookException {
         long id = JwtGenerator.decodeJWT(token);
         System.out.println("id" + id);
@@ -328,22 +352,26 @@ public class UserServiceImplementation implements UserService {
 
 
     @Override
+    @Transactional
     public List<BookModel> sortBookByAsc() {
         return bookRepository.sortBookAsc();
     }
 
     @Override
+    @Transactional
     public List<BookModel> sortBookByDesc() {
         return bookRepository.sortBookDesc();
     }
 
     @Override
+    @Transactional
     public List<BookModel> getAllBooks() throws UserException {
         List<BookModel> book = bookRepository.getAllBooks();
         return book;
     }
 
     @Override
+    @Transactional
     public String uploadFile(MultipartFile file, String token) {
         String url = amazonS3ClientService.uploadFile(file);
         long id = JwtGenerator.decodeJWT(token);
@@ -359,26 +387,29 @@ public class UserServiceImplementation implements UserService {
     }
 
 
-    /*  @Override
+    /*   @Override
+    @Transactional
       public List<BookModel> getAllBooks() throws UserException
       {
           List<BookModel> booklist=bookRepository.getAllBooks();
           return booklist;
       }*/
     @Override
+    @Transactional
     public List<BookModel> getAllVerifiedBooks() throws UserException {
         List<BookModel> booklist = bookRepository.getAllVerifiedBooks();
         return booklist;
     }
 
     @Override
+    @Transactional
     public BookModel getBookDetails(Long bookid) throws UserException {
         BookModel bookdetail = bookRepository.getBookDetail(bookid);
         return bookdetail;
     }
 
 
-//	@Override
+    //	@Override
 //	public BookModel getBookDetails(Long bookid) throws UserException
 //	{
 //	  BookModel bookdetail=bookRepository.getBookDetail(bookid);
@@ -389,7 +420,7 @@ public class UserServiceImplementation implements UserService {
 //		return bookdetail;
 //	}
 //
-//    @Override
+//     @Override
 //    public Response addToCart(String token, Long bookId) throws BookException, UserNotFoundException {
 //        BookModel bookModel = bookRepository.findById(bookId)
 //                .orElseThrow(() -> new UserNotFoundException(environment.getProperty("book.not.exist")));
@@ -408,6 +439,7 @@ public class UserServiceImplementation implements UserService {
 
     /************************ user details ****************************/
     @Override
+    @Transactional
     public UserAddressDetailsResponse getUserDetails(String token) {
         long userId = JwtGenerator.decodeJWT(token);
         UserModel user = userRepository.findByUserId(userId);
@@ -424,6 +456,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response addUserDetails(UserDetailsDTO userDetail, String locationType, long userId) {
         UserDetailsDAO userDetailsDAO = new UserDetailsDAO();
         BeanUtils.copyProperties(userDetail, userDetailsDAO);
@@ -438,6 +471,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response deleteUserDetails(UserDetailsDTO userDetail, long userId) {
         UserModel userModel = userRepository.findByUserId(userId);
         UserDetailsDAO userDetailsDAO = userDetailsRepository.findByAddressAndUserId(userDetail.getAddress(), userId);
@@ -448,34 +482,39 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Long getIdFromToken(String token) {
         Long id = jwtop.decodeJWT(token);
         return id;
     }
 
     @Override
+    @Transactional
     public Optional<BookModel> searchBookByName(String bookName) {
         Optional<BookModel> book = bookRepository.searchBookByName(bookName);
         return book;
     }
 
     @Override
+    @Transactional
     public Optional<BookModel> searchBookByAuthor(String authorName) {
         Optional<BookModel> book = bookRepository.searchBookByAuthor(authorName);
         return book;
     }
 
     @Override
+    @Transactional
     public long getOrderId() {
         Date date = new Date();
         //getTime() returns current time in milliseconds
         long time = date.getTime();
-        //Passed the milliseconds to constructor of Timestamp class 
+        //Passed the milliseconds to constructor of Timestamp class
         Timestamp ts = new Timestamp(time);
         return time;
     }
 
     @Override
+    @Transactional
     public Response orderPlaced(String token) throws BookException {
         long id = JwtGenerator.decodeJWT(token);
         UserModel userInfo = userRepository.findByUserId(id);
@@ -520,14 +559,14 @@ public class UserServiceImplementation implements UserService {
                             "Contact us\n" +
                             "mob. : +91-9771971429\n" +
                             "email : admin@onlinebookstore.com\n";
-            if (rabbitMQSender.send(new EmailObject(userInfo.getEmailId(), "Order Placed Successfully..", response, "Order Placed"))) {
-                return new Response("Order Successfull", HttpStatus.OK.value(), orderId);
-            }
+            asyncTask.sendEmail(userInfo.getEmailId(), "Order Placed Successfully..", "Order Placed  \n" + response);
+            return new Response("Order Successfull", HttpStatus.OK.value(), orderId);
         }
         throw new BookException(environment.getProperty("book.unverified"), HttpStatus.OK.value());
     }
 
     @Override
+    @Transactional
     public Response addToWishList(Long bookId, String token) {
         long id = JwtGenerator.decodeJWT(token);
         if (!wish.existsByBookIdAndUserId(bookId, id)) {
@@ -543,6 +582,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response deleteFromWishlist(Long bookId, String token) {
         long id = JwtGenerator.decodeJWT(token);
         WishListModel byBookIdAndUserId = wish.findByBookIdAndUserId(bookId, id);
@@ -552,6 +592,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response addFromWishlistToCart(Long bookId, String token) {
         long id = JwtGenerator.decodeJWT(token);
         if (!cartRepository.existsByBookIdAndUserId(bookId, id)) {
@@ -574,6 +615,7 @@ public class UserServiceImplementation implements UserService {
     }
 
     @Override
+    @Transactional
     public Response getAllItemFromWishList(String token) {
         long id = JwtGenerator.decodeJWT(token);
         List<WishListModel> wishListModels = wish.findAllByUserId(id);
